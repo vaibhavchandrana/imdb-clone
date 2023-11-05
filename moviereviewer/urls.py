@@ -1,28 +1,28 @@
-# from .views import FetchAndStoreGenres,FetchAndStoreMovies,FetchAndStoreSimilarMovies,FetchAndStoreCast,FetchAndStoreReview
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import MovieViewSet,MovieSearchView,CastViewSet,ReviewsViewSet,MovieByGenre,GenreViewSet,SaveCastData,ReviewData,WatchListCreateView
-
+from .views import MovieViewSet, MovieSearchView, WatchlistDeleteView, CastViewSet, ReviewsViewSet, MovieByGenre, GenreViewSet, GetCastByMovie, WatchlistCreateView, GetReviewByMovie, RandomizeRatings, WatchlistDetailView, WatchlistShareView
 router = DefaultRouter()
 router.register(r'movies', MovieViewSet)
 router.register(r'casts', CastViewSet)
 router.register(r'reviews', ReviewsViewSet)
 router.register(r'movies/genre', MovieByGenre)
 router.register(r'genre', GenreViewSet)
-# urlpatterns = [
-#     # path('fetch-genres/', FetchAndStoreGenres.as_view(), name='fetch-genres'),
-#     # path('fetch-movies/', FetchAndStoreMovies.as_view(), name='fetch-movies'),
-#     # path('fetch-similar-movies/', FetchAndStoreSimilarMovies.as_view(), name='fetch-similar'),
-#     # path('fetch-similar-cast/', FetchAndStoreCast.as_view(), name='fetch-cast'),
-#     # path('fetch-reviews/', FetchAndStoreReview.as_view(), name='fetch-review'),
-#     # Other URL patterns
-# ]
 urlpatterns = [
     # Your other URL patterns
-    path('api/', include(router.urls)),
-    path('api/movies/search', MovieSearchView.as_view(), name='movie-search'),
-     path('save_cast_data/<int:movie_id>/', SaveCastData.as_view(), name='save_cast_data'),
-     path('review_data/<int:movie_id>/', ReviewData.as_view(), name='save_review_data'),
-    path('watchlist/create/', WatchListCreateView.as_view(), name='watchlist-create'),
+    path('', include(router.urls)),
+    path('movies/search', MovieSearchView.as_view(), name='movie-search'),
+    path('cast/movie/<int:movie_id>/',
+         GetCastByMovie.as_view(), name='get-cast-by-movie'),
+    path('review/movie/<int:movie_id>/',
+         GetReviewByMovie.as_view(), name='get-cast-by-movie'),
+    path('randomize_ratings/', RandomizeRatings.as_view(),
+         name='randomize-ratings'),
+    path('add/movie/watchlist/', WatchlistCreateView.as_view(),
+         name='create-watchlist'),
+    path('get/movies/watchlist/<int:userId>/',
+         WatchlistDetailView.as_view(), name='watchlist-detail'),
+    path('share/watchlist/', WatchlistShareView.as_view(), name='create-watchlist'),
+    path('watchlist/delete/<int:watchlist_id>/',
+         WatchlistDeleteView.as_view(), name='watchlist-delete'),
 
 ]

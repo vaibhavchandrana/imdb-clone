@@ -1,59 +1,72 @@
-from rest_framework import viewsets, filters,generics,decorators
-from rest_framework.views import APIView,status
-from .models import Movie,Cast,Genre,Reviews,Cast,WatchList
-from .serializers import MovieSerializer,CastSerializer,ReviewsSerializer,GenreSerializer,CastSerializer,WatchlistSerializer
+from .models import Watchlist, Movie
+from rest_framework.views import APIView
+from rest_framework import status
+from rest_framework import viewsets, filters, generics, decorators
+from rest_framework.views import APIView, status
+from .models import Movie, Cast, Genre, Reviews, Cast
+from .serializers import MovieSerializer, CastSerializer, ReviewsSerializerGet,  ReviewsSerializer, GenreSerializer, CastSerializer, WatchlistSerializerGet
 from .pagination import CustomPageNumberPagination
 from rest_framework.response import Response
-import requests
+import random
+from django.contrib.auth.models import User
+from .serializers import WatchlistSerializer
+from rest_framework.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist
+from django.shortcuts import get_object_or_404
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAuthenticated
+
+
+def get_random_user():
+
+    return User.objects.order_by('?').first()
+
+
 class MovieViewSet(viewsets.ModelViewSet):
     queryset = Movie.objects.all()
     serializer_class = MovieSerializer
     pagination_class = CustomPageNumberPagination
 
-    filter_backends = [filters.OrderingFilter]  # Enable ordering filter
-    ordering_fields = ['vote_average', 'release_date']  # Define fields for sorting
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['vote_average', 'release_date']
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
 
-        # Get the sorting field and order from query parameters
-        sort_by = request.query_params.get('sort_by', None)
-        order = request.query_params.get('order', 'asc')  # Default to ascending order if not specified
+            sort_by = request.query_params.get('sort_by', None)
+            order = request.query_params.get('order', 'asc')
 
-        if sort_by:
-            if sort_by in self.ordering_fields:
-                # Apply sorting based on field and order
-                if order == 'desc':
-                    sort_by = f'-{sort_by}'  # For descending order
-                queryset = queryset.order_by(sort_by)
+            if sort_by:
+                if sort_by in self.ordering_fields:
+                    if order == 'desc':
+                        sort_by = f'-{sort_by}'
+                    queryset = queryset.order_by(sort_by)
 
-        # Iterate through queryset and update poster_path
-        for movie in queryset:
-            movie.poster_path = f"https://image.tmdb.org/t/p/w500/{movie.poster_path}"
-            movie.backdrop_path=f"https://image.tmdb.org/t/p/w500/{movie.backdrop_path}"
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
 
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(serializer.data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
 
 class MovieSearchView(generics.ListAPIView):
     serializer_class = MovieSerializer
 
     def get_queryset(self):
-        print("hello")
-        # Get the search query parameter from the request
-        query = self.request.query_params.get('query', '')
-
-        # Perform a case-insensitive search for movies with names containing the query
-        queryset = Movie.objects.filter(title__icontains=query)
-        print(f"Search Query: {query}")
-        print(f"Number of Results: {queryset.count()}")
-
-        return queryset
+        try:
+            query = self.request.query_params.get('search', '')
+            queryset = Movie.objects.filter(title__icontains=query)
+            for movie in queryset:
+                movie.poster_path = movie.poster_path
+                movie.backdrop_path = movie.backdrop_path
+            return queryset
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class CastViewSet(viewsets.ModelViewSet):
@@ -61,130 +74,150 @@ class CastViewSet(viewsets.ModelViewSet):
     serializer_class = CastSerializer
 
 
-
 class ReviewsViewSet(viewsets.ModelViewSet):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
     queryset = Reviews.objects.all()
     serializer_class = ReviewsSerializer
+
 
 class GenreViewSet(viewsets.ModelViewSet):
     queryset = Genre.objects.all()
     serializer_class = GenreSerializer
+    pagination_class = None
 
 
 class MovieByGenre(viewsets.ModelViewSet):
     queryset = Movie.objects.all()
     serializer_class = MovieSerializer
-    pagination_class = CustomPageNumberPagination  # Use your custom pagination class
+    pagination_class = CustomPageNumberPagination
 
-    # Define a custom action to filter movies by selected genres
-    @decorators.action(detail=False, methods=['GET'])
+    @decorators.action(detail=False, methods=['get'], url_path='by_genre')
     def by_genre(self, request):
-        # Get the list of genre IDs from the request query parameters
-        genre_ids = request.query_params.getlist('genre_ids')
+        try:
+            genre_id = request.query_params.get('genre_id')
 
-        # Filter movies by selected genres
-        movies = Movie.objects.filter(genre_ids__id__in=genre_ids)
+            if genre_id is not None:
+                try:
+                    genre_id = int(genre_id)
+                    movies = self.queryset.filter(genre_ids__id=genre_id)
+                    if not movies.exists():
+                        return Response({"error": "No movies found for the provided genre"}, status=status.HTTP_404_NOT_FOUND)
+                except ValueError:
+                    raise ValidationError("Genre ID must be a valid integer")
+            else:
+                movies = self.queryset.none()
 
-        # Apply pagination
-        page = self.paginate_queryset(movies)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            page = self.paginate_queryset(movies)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
 
-        # Serialize the filtered movies and return the response
-        serializer = MovieSerializer(movies, many=True)
-        return Response(serializer.data)
-
-class SaveCastData(APIView):
-    def get(self, request,movie_id):
-
-        # Define the API URL
-        cast_db_data=Cast.objects.filter(movie_id=movie_id)
-        if cast_db_data.count()>0:
-            serializer = CastSerializer(cast_db_data, many=True)
-            return Response(serializer.data) 
-        cast_db_ids = set(Cast.objects.filter(movie_id=movie_id).values_list('id', flat=True))
-        api_url = f'https://api.themoviedb.org/3/movie/{movie_id}/credits?language=en-US'
-        
-        # Set the authorization header
-        headers = {
-            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI5YTJhNmQyZmFiZjNhZTMwNjE0ZTMwZjk4Njk4OTE3YiIsInN1YiI6IjY0ZTBjZjBjYTNiNWU2MDFkODc1NjdlYSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.P21N-Z4urgYNTW3iLBfC9aiOMAEii2aE6AoHibCvC6I',  # Replace with your API key
-            'accept': 'application/json',
-        }
-        
-        # Make the GET request to the API
-        response = requests.get(api_url, headers=headers)
-        data = response.json()
-        print(data)
-        # Extract cast data and save it to the Cast model
-        cast_data = data.get('cast', [])
-        cast_data.sort(key=lambda x: x.get('popularity', 0), reverse=True)
-        print(cast_data)
-
-        # Select only the top 10 highest popularity cast members
-        cast_data = cast_data[:10]
-        cast_objects = []
-        for cast_member in cast_data:
-            if cast_member['known_for_department']=="Acting" and  cast_member['id'] not in cast_db_ids:
-                cast_objects.append({
-                    'id': cast_member['id'],
-                    'name': cast_member['name'],
-                    'character_name': cast_member['character'],
-                    'profile_path': f"https://image.tmdb.org/t/p/w500/{cast_member['profile_path']}",
-                    'movie_id': movie_id,
-                })
-        Cast.objects.bulk_create([Cast(**cast) for cast in cast_objects])
-
-        # Serialize and return the saved data
-        serializer = CastSerializer(Cast.objects.filter(movie_id=movie_id), many=True)
-        return Response(serializer.data)
+            serializer = self.serializer_class(movies, many=True)
+            return Response(serializer.data)
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ObjectDoesNotExist:
+            return Response({"error": "Genre not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": "An unexpected error occurred"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class ReviewData(APIView):
-    def get(self, request,movie_id):
+class GetCastByMovie(APIView):
 
-        # Define the API URL
-        ReviewData_db_data=Reviews.objects.filter(movie_id=movie_id)
-        if ReviewData_db_data.count()>0:
-            serializer = ReviewsSerializer(ReviewData_db_data, many=True)
-            return Response(serializer.data) 
-        cast_db_ids = set(Reviews.objects.filter(movie_id=movie_id).values_list('id', flat=True))
-        api_url = f'https://api.themoviedb.org/3/movie/{movie_id}/reviews?language=en-US&page=1'
-        
-        # Set the authorization header
-        headers = {
-            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI5YTJhNmQyZmFiZjNhZTMwNjE0ZTMwZjk4Njk4OTE3YiIsInN1YiI6IjY0ZTBjZjBjYTNiNWU2MDFkODc1NjdlYSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.P21N-Z4urgYNTW3iLBfC9aiOMAEii2aE6AoHibCvC6I',  # Replace with your API key
-            'accept': 'application/json',
-        }
-        
-        # Make the GET request to the API
-        response = requests.get(api_url, headers=headers)
-        data = response.json()
-        print(data)
-        # Extract cast data and save it to the Cast model
-        cast_data = data.get('results', [])
-       
-        print(cast_data)
+    def get(self, request, movie_id):
+        try:
+            cast_query = Cast.objects.filter(movie_id=movie_id)
 
-      
-        cast_objects = []
-        for review_element in cast_data:
-                cast_objects.append({
-                    'name':review_element['author'],
-                    'review_data':review_element['content'],
-                    'created_at':review_element['created_at'],
-                    'movie_id': movie_id,
-                })
-        Reviews.objects.bulk_create([Reviews(**cast) for cast in cast_objects])
+            serializer = CastSerializer(cast_query, many=True)
 
-        # Serialize and return the saved data
-        serializer = ReviewsSerializer(Reviews.objects.filter(movie_id=movie_id), many=True)
-        return Response(serializer.data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class WatchListCreateView(APIView):
-    def post(self, request):
-        serializer = WatchlistSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class GetReviewByMovie(APIView):
+
+    def get(self, request, movie_id):
+        try:
+            review_query_data = Reviews.objects.filter(movie_id=movie_id)
+
+            serializer = ReviewsSerializerGet(review_query_data, many=True)
+
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class RandomizeRatings(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            reviews = Reviews.objects.all()
+            for review in reviews:
+                review.rating = random.randint(1, 5)
+                review.save()
+
+            serializer = ReviewsSerializer(reviews, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class WatchlistCreateView(generics.CreateAPIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    queryset = Watchlist.objects.all()
+    serializer_class = WatchlistSerializer
+
+
+class WatchlistDetailView(generics.ListAPIView):
+    serializer_class = WatchlistSerializerGet
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Assuming you pass the userId in the URL
+        userId = self.kwargs['userId']
+        return Watchlist.objects.filter(owner_id=userId)
+
+
+class WatchlistShareView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, format=None):
+        owner_email = request.data.get('owner_email')
+        shared_by = request.data.get('shared_by')
+        movie_id = request.data.get('movie')
+
+        try:
+            owner = User.objects.get(email=owner_email)
+            shared_by = User.objects.get(id=shared_by)
+            movie = Movie.objects.get(id=movie_id)
+            watchlist = Watchlist(
+                owner=owner, shared_by=shared_by, movies=movie)
+            watchlist.save()
+
+            return Response({"message": "Watchlist created successfully"}, status=status.HTTP_201_CREATED)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class WatchlistDeleteView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, watchlist_id):
+        try:
+            watchlist = get_object_or_404(Watchlist, id=watchlist_id)
+            watchlist.delete()
+            return Response({"message": "Watchlist deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+        except ObjectDoesNotExist:
+            return Response({"error": "Watchlist not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
